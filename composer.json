@@ -1,0 +1,20 @@
+{
+    "name": "olegv/cement",
+    "description": "DI-контейнер для Brick-компонентов",
+    "type": "library",
+    "keywords": ["component", "ui", "template", "php", "cement", "компоненты"],
+    "homepage": "https://github.com/OlegVashkevich/cement",
+    "license": "MIT",
+    "authors": [{
+        "name": "Oleg Vashkevich",
+        "email": "ugluk@tut.by"
+    }],
+    "require": {
+        "php": ">=8.2"
+    },
+    "autoload": {
+        "psr-4": {
+            "OlegV\\": "src/"
+        }
+    }
+}
