@@ -32,12 +32,12 @@ $cement->addAll([
         'cart' => fn($c) => new Button('В корзину', 'secondary'),
     ],
     
-    ProductCard::class => fn($c) => new ProductCard(
-        id: 1,
-        title: 'Товар',
-        price: 99.99,
-        imageUrl: '/product.jpg',
-        button: $c->get(Button::class, ['variant' => 'buy'])
+    ProductCard::class =>  fn($c, $p) => new ProductCard(
+        id: $p['id'] ?? 1,
+        title: $p['title'] ?? 'Товар',
+        price: $p['price'] ?? 99.99,
+        imageUrl: $p['imageUrl'] ?? '/product.jpg',
+        button: $p['button'] ?? $c->get(Button::class, ['variant' => 'buy'])
     ),
 ]);
 //Используем компонент
