@@ -33,14 +33,24 @@ use RuntimeException;
  */
 class Cement
 {
+    /**
+     * @var array<string, array<string, Closure|object|array<string, mixed>>>
+     */
     private array $definitions = [];
+    /**
+     * @var array<string, object>
+     */
     private array $instances = [];
+    /**
+     * @var array<string, bool>
+     */
+    private array $resolving = [];
 
     /**
      * Используем компонент с вариантами
      * @param  string  $className  Класс компонента
-     * @param  array|Closure  $factory  Массив вариантов или фабричная функция
-     * */
+     * @param  array<string, array<string, Closure|object|array<string, mixed>>>|Closure  $factory  Массив вариантов или фабричная функция
+     */
     public function add(string $className, array|Closure $factory): void
     {
         // Если передана просто фабрика - оборачиваем в массив с ключом 'default'
@@ -53,6 +63,8 @@ class Cement
 
     /**
      * Используем несколько компонентов сразу
+     *
+     * @param  array<string, array<string, array<string, Closure|object|array<string, mixed>>>|Closure>  $config  Массив вариантов или фабричная функция
      */
     public function addAll(array $config): void
     {
@@ -65,19 +77,21 @@ class Cement
      * Получить компонент
      *
      * @param string $className Класс компонента
-     * @param array $params Параметры для конструктора или фабрики
-     *                      Можно указать 'variant' для выбора варианта
+     * @param array<string, mixed> $params Параметры для конструктора или фабрики
      * @return object Готовый компонент
      */
     public function get(string $className, array $params = []): object
     {
         // Определяем вариант (если не указан - 'default')
         $variant = $params['variant'] ?? 'default';
+        if (!is_string($variant)) {
+            throw new RuntimeException('Параметр variant должен быть строкой');
+        }
         unset($params['variant']);
 
         // Ключ для кэша
         $key = $className . ':' . $variant;
-        if ($params) {
+        if ($params !== []) {
             $key .= ':' . md5(serialize($params));
         }
 
@@ -97,10 +111,17 @@ class Cement
 
     /**
      * Создаёт новый экземпляр (игнорирует кэш)
-     */
+     *
+     * @param  string  $className  Класс компонента
+     * @param  array<string, mixed>  $params  Параметры для конструктора или фабрики
+     * @return object Готовый компонент
+    */
     public function make(string $className, array $params = []): object
     {
         $variant = $params['variant'] ?? 'default';
+        if (!is_string($variant)) {
+            throw new RuntimeException('Параметр variant должен быть строкой');
+        }
         unset($params['variant']);
 
         return $this->create($className, $variant, $params);
@@ -124,35 +145,57 @@ class Cement
 
     /**
      * Основная логика создания компонента
+     *
+     * @param  string  $className  Класс компонента
+     * @param  string  $variant Вариант конструктора
+     * @param  array<string, mixed>  $params  Параметры для конструктора или фабрики
+     * @return object Готовый компонент
      */
     private function create(string $className, string $variant, array $params): object
     {
-        // Если есть определение - используем его
-        if (isset($this->definitions[$className][$variant])) {
-            $factory = $this->definitions[$className][$variant];
-
-            if ($factory instanceof Closure) {
-                return $factory($this, $params);
-            }
-
-            if (is_object($factory)) {
-                return $factory;
-            }
-
-            if (is_array($factory)) {
-                return new $className(...$factory);
-            }
-
-            throw new RuntimeException("Некорректная фабрика для $className:$variant");
+        // Проверка на циклическую зависимость
+        $resolvingKey = $className . ':' . $variant;
+        if (isset($this->resolving[$resolvingKey])) {
+            throw new RuntimeException(
+                "Обнаружена циклическая зависимость при создании $className ($variant)"
+            );
         }
 
-        // Если нет определения - создаём автоматически
-        return $this->autowire($className, $params);
+        $this->resolving[$resolvingKey] = true;
+        try {
+            // Если есть определение - используем его
+            if (isset($this->definitions[$className][$variant])) {
+                $factory = $this->definitions[$className][$variant];
+
+                if ($factory instanceof Closure) {
+                    return (object)$factory($this, $params);
+                }
+
+                if (is_object($factory)) {
+                    return $factory;
+                }
+
+                if (is_array($factory)) {
+                    return new $className(...$factory);
+                }
+
+                /** @phpstan-ignore deadCode.unreachable */
+                throw new RuntimeException("Некорректная фабрика для $className:$variant");
+            }
+
+            // Если нет определения - создаём автоматически
+            return $this->autowire($className, $params);
+        } finally {
+            unset($this->resolving[$resolvingKey]);
+        }
     }
 
     /**
      * Автоматическое создание компонента через рефлексию
-     */
+     * @param  string  $className  Класс компонента
+     * @param  array<string, mixed>  $params  Параметры для конструктора или фабрики
+     * @return object Готовый компонент
+ */
     private function autowire(string $className, array $params): object
     {
         if (!class_exists($className)) {
@@ -162,7 +205,7 @@ class Cement
         $reflection = new ReflectionClass($className);
 
         // Если нет конструктора
-        if (!$reflection->getConstructor()) {
+        if ($reflection->getConstructor() === null) {
             return new $className();
         }
 
@@ -174,10 +217,16 @@ class Cement
 
     /**
      * Разрешает аргументы конструктора
+     * @param  ReflectionClass<object>  $reflection
+     * @param  array<string, mixed>  $params
+     * @return array<int, mixed>
      */
     private function resolveConstructorArgs(ReflectionClass $reflection, array $params): array
     {
         $constructor = $reflection->getConstructor();
+        if($constructor === null) {
+            return [];
+        }
         $args = [];
 
         foreach ($constructor->getParameters() as $param) {
@@ -191,7 +240,7 @@ class Cement
 
             // Если параметр - это другой Brick компонент
             $type = $param->getType();
-            if (!$type->isBuiltin() && $type instanceof ReflectionNamedType) {
+            if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
                 $typeName = $type->getName();
 
                 // Пробуем создать через контейнер
@@ -199,7 +248,15 @@ class Cement
                     $args[] = $this->get($typeName);
                     continue;
                 } catch (Exception) {
-                    // Не получилось - продолжаем
+                    // Не получилось - проверяем, может ли быть null
+                    if ($type->allowsNull()) {
+                        $args[] = null;
+                        continue;
+                    }
+                    // Если тип не nullable, выбрасываем исключение
+                    throw new RuntimeException(
+                        "Не удалось разрешить зависимость {$typeName} для параметра {$name}"
+                    );
                 }
             }
 
@@ -209,8 +266,23 @@ class Cement
                 continue;
             }
 
-            // Для публичных свойств Brick - null
-            $args[] = null;
+            // Если тип позволяет null или это встроенный тип
+            if ($type!==null && $type->allowsNull()) {
+                $args[] = null;
+                continue;
+            }
+
+            // Для обязательных параметров без значения по умолчанию
+            $typeName = 'mixed';
+            if ($type instanceof ReflectionNamedType) {
+                $typeName = $type->getName();
+            } elseif ($type !== null) {
+                // Для других типов ReflectionType (например, ReflectionUnionType)
+                $typeName = (string)$type;
+            }
+            throw new RuntimeException(
+                "Не удалось разрешить обязательный параметр $name типа $typeName"
+            );
         }
 
         return $args;
