@@ -19,9 +19,9 @@ composer require olegv/cement
 ## Использование
 
 ```php
-get OlegV\Cement\Cement;
-get Components\Button\Button;
-get Components\ProductCard\ProductCard;
+use OlegV\Cement\Cement;
+use Components\Button\Button;
+use Components\ProductCard\ProductCard;
 
 $cement = new Cement();
 
