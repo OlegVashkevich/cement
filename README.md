@@ -1,21 +1,12 @@
 # Cement - Фабрика вариантов для Brick компонентов
 
-Фабрика для создания вариантов компонентов Brick. Позволяет регистрировать прототипы компонентов с разными вариантами и создавать их экземпляры с переопределениями.
-
-## Особенности
-
-- **Для Brick компонентов** - работает только с классами, расширяющими `Brick`
-- **Прототипный подход** - регистрируете базовые варианты, создаёте с кастомными параметрами
-- **Строгая типизация** - PHP 8.2+ с проверками типов
-- **Простота** - минималистичный API без лишней сложности
+Фабрика для создания вариантов компонентов Brick. Регистрируйте прототипы, создавайте экземпляры с переопределениями.
 
 ## Установка
 
 ```bash
 composer require olegv/cement
 ```
-
-> Cement является частью пакета Brick и устанавливается вместе с ним
 
 ## Быстрый старт
 
@@ -24,271 +15,120 @@ use OlegV\Cement;
 use OlegV\Components\Button;
 use OlegV\Components\Card;
 
-// Создаём фабрику
 $cement = new Cement();
 
-// Регистрируем варианты кнопок
+// Регистрация вариантов
 $cement->add(Button::class, new Button('Submit', 'primary'), 'submit');
 $cement->add(Button::class, new Button('Cancel', 'secondary'), 'cancel');
-$cement->add(Button::class, new Button('Delete', 'danger'), 'delete');
 
-// Создаём кнопку на основе варианта
-$submitButton = $cement->build(Button::class, [], 'submit');
-echo $submitButton; // Button с текстом "Submit", вариантом "primary"
-
-// Создаём с переопределениями
-$customButton = $cement->build(Button::class, [
-    'text' => 'Custom Text',
-    'variant' => 'warning'
-], 'submit');
-echo $customButton; // Button с текстом "Custom Text", вариантом "warning"
-```
-
-## Работа с вложенными компонентами
-
-```php
-use OlegV\Cement;
-use OlegV\Components\Button;
-use OlegV\Components\Card;
-
-$cement = new Cement();
-
-// Регистрируем варианты
-$cement->add(Button::class, new Button('Default Action', 'primary'), 'default');
-$cement->add(Card::class, new Card('Default Title', new Button('Action')), 'default');
-
-// Создаём сложную структуру
-$customCard = $cement->build(Card::class, [
-    'title' => 'Custom Card',
-    'button' => $cement->build(Button::class, [
-        'text' => 'Custom Action',
-        'variant' => 'success'
-    ], 'default') // Используем вариант 'default' как основу
-], 'default');
-
-echo $customCard;
+// Создание
+$button = $cement->build(Button::class, [], 'submit'); // Button('Submit', 'primary')
+$custom = $cement->build(Button::class, ['text' => 'Save'], 'submit'); // Button('Save', 'primary')
 ```
 
 ## API
 
-### `Cement::add()`
-Регистрирует прототип варианта компонента
+### Конструктор
 
 ```php
-$cement->add(string $className, Brick $prototype, string $variant = 'default'): void
+new Cement(
+    string $errorMode = Cement::ERROR_FALLBACK,
+    ?bool $isProduction = null
+)
 ```
 
-**Пример:**
-```php
-// Регистрация варианта кнопки
-$cement->add(Button::class, new Button('Submit', 'primary'), 'submit');
+**Режимы ошибок:**
+- `Cement::ERROR_STRICT` - бросает исключения (development)
+- `Cement::ERROR_SILENT` - возвращает `null` (production)
+- `Cement::ERROR_FALLBACK` - возвращает заглушку (по умолчанию)
 
-// Регистрация варианта карточки
-$cardPrototype = new Card('Title', new Button('Action'));
-$cement->add(Card::class, $cardPrototype, 'compact');
+**Окружение:**
+- Автоопределение из `APP_ENV`
+- CLI всегда production
+- По умолчанию - production
+
+```php
+// Development с заглушками
+$cement = new Cement(Cement::ERROR_FALLBACK, false);
+
+// Production с тихими ошибками  
+$cement = new Cement(Cement::ERROR_SILENT, true);
+
+// Автоопределение
+$cement = new Cement(); // ERROR_FALLBACK + auto-detect
 ```
 
-### `Cement::build()`
-Создаёт компонент на основе зарегистрированного прототипа
+### Основные методы
 
 ```php
-$cement->build(string $className, array $overrides = [], string $variant = 'default'): Brick
+// Регистрация
+$cement->add(string $className, Brick $prototype, string $variant = 'default');
+
+// Создание с переопределениями  
+$cement->build(string $className, array $overrides = [], string $variant = 'default'): ?Brick;
+
+// Проверка
+$cement->has(string $className, string $variant = 'default'): bool;
+$cement->variants(string $className): array;
+$cement->getPrototype(string $className, string $variant = 'default'): ?Brick;
+
+// Очистка
+$cement->clear(): void;
 ```
 
-**Пример:**
+## Примеры
+
+### Вложенные компоненты
+
 ```php
-// Без переопределений
-$button = $cement->build(Button::class, [], 'submit');
+$cement->add(Button::class, new Button('Action', 'primary'), 'default');
+$cement->add(Card::class, new Card('Title', new Button('Action')), 'default');
 
-// С переопределениями
-$customButton = $cement->build(Button::class, [
-    'text' => 'Custom',
-    'variant' => 'warning'
-], 'submit');
-
-// С вложенными компонентами
 $card = $cement->build(Card::class, [
-    'title' => 'New Title',
-    'button' => $cement->build(Button::class, ['text' => 'Nested'], 'submit')
-], 'compact');
+    'title' => 'Custom',
+    'button' => $cement->build(Button::class, ['text' => 'Nested'], 'default')
+], 'default');
+//или
+$card2 = $cement->build(Card::class, [
+    'title' => 'Custom',
+    'button' => new Button('Nested', 'primary')
+], 'default');
 ```
 
-### `Cement::has()`
-Проверяет существование варианта
+### Полный сценарий
 
 ```php
-$cement->has(string $className, string $variant = 'default'): bool
-```
-
-**Пример:**
-```php
-if ($cement->has(Button::class, 'primary')) {
-    // Вариант существует
-}
-```
-
-### `Cement::variants()`
-Возвращает список зарегистрированных вариантов для класса
-
-```php
-$cement->variants(string $className): array
-```
-
-**Пример:**
-```php
-$variants = $cement->variants(Button::class);
-// ['submit', 'cancel', 'delete']
-```
-
-### `Cement::getPrototype()`
-Возвращает зарегистрированный прототип для проверки или документации
-
-```php
-$cement->getPrototype(string $className, string $variant = 'default'): ?Brick
-```
-
-**Пример:**
-```php
-$prototype = $cement->getPrototype(Button::class, 'submit');
-// Button('Submit', 'primary')
-```
-
-### `Cement::clear()`
-Очищает все зарегистрированные прототипы
-
-```php
-$cement->clear(): void
-```
-
-**Пример:**
-```php
-$cement->clear(); // Удаляет все варианты всех компонентов
-```
-
-## Полный пример
-
-```php
-use OlegV\Cement;
-use OlegV\Components\Button;
-use OlegV\Components\Card;
-use OlegV\Components\Modal;
-
 $cement = new Cement();
 
-// 1. Регистрируем варианты компонентов
+// Регистрация
 $cement->add(Button::class, new Button('Submit', 'primary'), 'primary');
 $cement->add(Button::class, new Button('Cancel', 'secondary'), 'secondary');
-$cement->add(Button::class, new Button('Delete', 'danger'), 'danger');
 
 $cement->add(Card::class, new Card(
-    title: 'Product Card',
-    description: 'Default description',
-    price: 99.99,
-    button: new Button('Add to Cart', 'primary')
+    title: 'Product',
+    button: new Button('Buy', 'primary')
 ), 'product');
 
-$cement->add(Modal::class, new Modal(
-    title: 'Confirm Action',
-    content: 'Are you sure?',
-    buttons: [
-        new Button('Yes', 'primary'),
-        new Button('No', 'secondary')
-    ]
-), 'confirm');
+// Использование
+$button = $cement->build(Button::class, [], 'primary');
+$custom = $cement->build(Button::class, ['text' => 'Save'], 'primary');
 
-// 2. Проверяем доступные варианты
-echo "Available button variants: ";
-print_r($cement->variants(Button::class)); // ['primary', 'secondary', 'danger']
-
-// 3. Создаём компоненты
-$primaryButton = $cement->build(Button::class, [], 'primary');
-$customButton = $cement->build(Button::class, ['text' => 'Custom'], 'primary');
-
-$productCard = $cement->build(Card::class, [
-    'title' => 'iPhone 15',
-    'price' => 120000,
-    'button' => $cement->build(Button::class, [
-        'text' => 'Buy Now',
-        'variant' => 'success'
-    ], 'primary')
+$card = $cement->build(Card::class, [
+    'title' => 'iPhone',
+    'button' => $cement->build(Button::class, ['text' => 'Buy Now'], 'primary')
 ], 'product');
 
-$confirmModal = $cement->build(Modal::class, [
-    'title' => 'Delete Product',
-    'content' => 'This action cannot be undone',
-    'buttons' => [
-        $cement->build(Button::class, ['text' => 'Delete', 'variant' => 'danger'], 'danger'),
-        $cement->build(Button::class, ['text' => 'Cancel'], 'secondary')
-    ]
-], 'confirm');
-
-// 4. Рендеринг
-echo $productCard;
-echo $confirmModal;
-
-// 5. Очистка (например, для тестов)
+// Очистка
 $cement->clear();
 ```
 
-## Настройка обработки ошибок
+## Принципы
 
-Cement предоставляет три режима обработки ошибок:
+- **Иммутабельность** - прототипы readonly, возвращаются как есть без переопределений
+- **Типобезопасность** - строгие проверки PHP 8.2+
+- **Безопасность по умолчанию** - production-режим, заглушки при ошибках
+- **KISS** - минимальный API, одна ответственность
 
-### `Cement::ERROR_STRICT`
-**Для разработки.** Бросает исключения при ошибках. Помогает быстро находить проблемы.
+---
 
-```php
-$cement = new Cement(Cement::ERROR_STRICT, false);
-// При ошибке: InvalidArgumentException
-```
-
-### `Cement::ERROR_SILENT`
-**Для production.** Возвращает `null` при ошибках, ошибки логируются. Интерфейс продолжает работу.
-
-```php
-$cement = new Cement(Cement::ERROR_SILENT, true);
-// При ошибке: возвращает null, ошибка в error_log
-```
-
-### `Cement::ERROR_FALLBACK` (по умолчанию)
-**Универсальный режим.** Возвращает компонент-заглушку. В development показывает детали ошибки, в production - пустой комментарий.
-
-```php
-$cement = new Cement(); // По умолчанию ERROR_FALLBACK
-// При ошибке: <div>Brick Error: ...</div> (development) или <!-- --> (production)
-```
-
-### Автоопределение окружения
-
-Cement автоматически определяет production-окружение:
-
-1. По переменной `APP_ENV=production` (стандарт для Laravel, Symfony и др.)
-2. CLI-скрипты всегда считаются production (для безопасности)
-3. По умолчанию - production (пессимистичный подход)
-
-Можно явно указать окружение:
-
-```php
-// Явное указание
-$isProd = ($_ENV['APP_ENV'] ?? 'development') === 'production';
-$cement = new Cement(
-    errorMode: $isProd ? Cement::ERROR_SILENT : Cement::ERROR_FALLBACK,
-    isProduction: $isProd
-);
-```
-
-
-## Принципы работы
-
-1. **Иммутабельность** - прототипы и созданные компоненты являются readonly
-2. **Безопасность** - при отсутствии переопределений возвращается оригинальный прототип
-3. **Типобезопасность** - строгие проверки типов на всех этапах
-4. **Простота** - минимальный API, понятная логика работы
-
-## Интеграция с Brick
-
-Cement идеально дополняет Brick-компоненты:
-- Создавайте библиотеки стандартных компонентов (primary button, danger button и т.д.)
-- Реализуйте тему/стиль через варианты компонентов
-- Упростите создание сложных компонентных структур
-- Используйте в сочетании с другими фичами Brick (кэширование, наследование)
+**Cement** дополняет Brick, позволяя создавать библиотеки стандартных компонентов и упрощать работу со сложными структурами.
