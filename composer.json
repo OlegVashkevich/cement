@@ -1,6 +1,6 @@
 {
     "name": "olegv/cement",
-    "description": "DI-контейнер для Brick-компонентов",
+    "description": "Фабрика вариантов для Brick-компонентов",
     "type": "library",
     "keywords": ["component", "ui", "template", "php", "cement", "компоненты"],
     "homepage": "https://github.com/OlegVashkevich/cement",
