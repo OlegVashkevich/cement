@@ -34,13 +34,6 @@ class Cement
      * Используется в production для предотвращения падения интерфейса.
      * Ошибки логируются, но интерфейс продолжает работу.
      */
-    public const ERROR_SILENT = 'silent';
-    /**
-     * Режим обработки ошибок: возвращать компонент-заглушку
-     *
-     * Используется по умолчанию. В development показывает информативную
-     * заглушку с деталями ошибки, в production возвращает пустой комментарий.
-     */
     public const ERROR_FALLBACK = 'fallback';
 
     /**
@@ -55,7 +48,6 @@ class Cement
      *
      * @param  string  $errorMode     Режим обработки ошибок. Допустимые значения:
      *                                - Cement::ERROR_STRICT   - выбрасывать исключения
-     *                                - Cement::ERROR_SILENT   - возвращать null
      *                                - Cement::ERROR_FALLBACK - возвращать заглушку (по умолчанию)
      * @param  bool|null  $isProduction Принудительно указать production-режим.
      *                                Если null, определяется автоматически по APP_ENV.
@@ -65,11 +57,10 @@ class Cement
      *
      * @example new Cement() // Безопасный режим с автодетектом окружения
      * @example new Cement(Cement::ERROR_STRICT, false) // Development с исключениями
-     * @example new Cement(Cement::ERROR_SILENT, true)  // Production с тихими ошибками
      */
     public function __construct(string $errorMode = self::ERROR_FALLBACK,?bool $isProduction = null)
     {
-        if (!in_array($errorMode, [self::ERROR_STRICT, self::ERROR_SILENT, self::ERROR_FALLBACK], true)) {
+        if (!in_array($errorMode, [self::ERROR_STRICT, self::ERROR_FALLBACK], true)) {
             throw new InvalidArgumentException(
                 sprintf('Invalid error mode: %s. Use Cement::ERROR_* constants', $errorMode)
             );
@@ -128,10 +119,10 @@ class Cement
      * @param  string  $className
      * @param  array<mixed, mixed>  $overrides
      * @param  string  $variant
-     * @return Brick|null
+     * @return Brick
      * @throws Throwable
      */
-    public function build(string $className, array $overrides = [], string $variant = 'default'): ?Brick
+    public function build(string $className, array $overrides = [], string $variant = 'default'): Brick
     {
         try {
             return $this->doBuild($className, $overrides, $variant);
@@ -175,34 +166,26 @@ class Cement
     /**
      * @throws Throwable
      */
-    private function handleError(Throwable $e, string $className, string $variant): ?ErrorBrick
+    private function handleError(Throwable $e, string $className, string $variant): ErrorBrick
     {
-        switch ($this->errorMode) {
-            case self::ERROR_STRICT:
-                throw $e;
-
-            case self::ERROR_SILENT:
-                // Тихое логирование
-                if (!$this->isProduction) {
-                    error_log(sprintf(
-                        '[Cement] Error building %s:%s - %s',
-                        $className,
-                        $variant,
-                        $e->getMessage()
-                    ));
-                }
-                return null;
-
-            case self::ERROR_FALLBACK:
-                // Возвращаем заглушку
-                return new ErrorBrick(
-                    message: $e->getMessage(),
-                    originalClass: $className,
-                    context: "variant: $variant",
-                    isProduction: $this->isProduction
-                );
+        if ($this->errorMode === self::ERROR_STRICT) {
+            throw $e;
         }
-        return null;
+        // Тихое логирование
+        if (!$this->isProduction) {
+            error_log(sprintf(
+                '[Cement] Error building %s:%s - %s',
+                $className,
+                $variant,
+                $e->getMessage()
+            ));
+        }
+        return new ErrorBrick(
+            message: $e->getMessage(),
+            originalClass: $className,
+            context: "variant: $variant",
+            isProduction: $this->isProduction
+        );
     }
 
     /**

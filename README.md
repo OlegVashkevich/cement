@@ -1,5 +1,17 @@
 # Cement - Фабрика вариантов для Brick компонентов
 
+![PHP](https://img.shields.io/badge/PHP-8.2%2B-777BB4?style=flat&logo=php&logoColor=white)
+![PHPUnit](https://img.shields.io/badge/PHPUnit-tested-366C9C?style=flat&logo=php&logoColor=white)
+![PHPStan](https://img.shields.io/badge/PHPStan-level%20MAX-8E44AD?style=flat&logo=php&logoColor=white)
+![PSR-12](https://img.shields.io/badge/code%20style-PSR--12-1E90FF?style=flat&logo=php&logoColor=white)
+
+![Tests](https://img.shields.io/github/actions/workflow/status/OlegVashkevich/cement/tests.yml?label=Tests)
+![Analise](https://img.shields.io/github/actions/workflow/status/OlegVashkevich/cement/stan.yml?label=Analise)
+
+![License](https://img.shields.io/github/license/OlegVashkevich/cement?style=flat)
+![Immutable Components](https://img.shields.io/badge/Components-Immutable-blueviolet)
+![Server-side](https://img.shields.io/badge/Rendering-Server--side-blue)
+
 Фабрика для создания вариантов компонентов Brick. Регистрируйте прототипы, создавайте экземпляры с переопределениями.
 
 > Часть проекта **[Brick UI Component System](https://github.com/OlegVashkevich/brick)**
@@ -41,7 +53,6 @@ new Cement(
 
 **Режимы ошибок:**
 - `Cement::ERROR_STRICT` - бросает исключения (development)
-- `Cement::ERROR_SILENT` - возвращает `null` (production)
 - `Cement::ERROR_FALLBACK` - возвращает заглушку (по умолчанию)
 
 **Окружение:**
@@ -52,9 +63,6 @@ new Cement(
 ```php
 // Development с заглушками
 $cement = new Cement(Cement::ERROR_FALLBACK, false);
-
-// Production с тихими ошибками  
-$cement = new Cement(Cement::ERROR_SILENT, true);
 
 // Автоопределение
 $cement = new Cement(); // ERROR_FALLBACK + auto-detect

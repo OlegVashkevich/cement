@@ -38,7 +38,6 @@ final class CementTest extends TestCase
     public function testConstructorAcceptsValidErrorModes(): void
     {
         $this->assertInstanceOf(Cement::class, new Cement(Cement::ERROR_STRICT));
-        $this->assertInstanceOf(Cement::class, new Cement(Cement::ERROR_SILENT));
         $this->assertInstanceOf(Cement::class, new Cement(Cement::ERROR_FALLBACK));
     }
 
@@ -138,15 +137,6 @@ final class CementTest extends TestCase
 
         $this->expectException(InvalidArgumentException::class);
         $strictCement->build(TestButton::class, [], 'nonexistent');
-    }
-
-    public function testErrorModeSilentReturnsNull(): void
-    {
-        $silentCement = new Cement(Cement::ERROR_SILENT, false);
-        $silentCement->add(TestButton::class, new TestButton('Test'), 'default');
-
-        $result = $silentCement->build(TestButton::class, [], 'nonexistent');
-        $this->assertNull($result);
     }
 
     public function testErrorModeFallbackReturnsFallbackComponent(): void
