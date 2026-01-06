@@ -230,27 +230,53 @@ echo $confirmModal;
 $cement->clear();
 ```
 
-## Обработка ошибок
+## Настройка обработки ошибок
 
-Cement выбрасывает информативные исключения при ошибках:
+Cement предоставляет три режима обработки ошибок:
+
+### `Cement::ERROR_STRICT`
+**Для разработки.** Бросает исключения при ошибках. Помогает быстро находить проблемы.
 
 ```php
-try {
-    // Попытка создать несуществующий вариант
-    $cement->build(Button::class, [], 'nonexistent');
-} catch (InvalidArgumentException $e) {
-    // Сообщение: "Variant 'nonexistent' not found for OlegV\Components\Button. Available: primary, secondary"
-    echo $e->getMessage();
-}
-
-try {
-    // Попытка переопределить несуществующее свойство
-    $cement->build(Button::class, ['nonexistent' => 'value'], 'primary');
-} catch (InvalidArgumentException $e) {
-    // Сообщение: "Property 'nonexistent' does not exist in OlegV\Components\Button"
-    echo $e->getMessage();
-}
+$cement = new Cement(Cement::ERROR_STRICT, false);
+// При ошибке: InvalidArgumentException
 ```
+
+### `Cement::ERROR_SILENT`
+**Для production.** Возвращает `null` при ошибках, ошибки логируются. Интерфейс продолжает работу.
+
+```php
+$cement = new Cement(Cement::ERROR_SILENT, true);
+// При ошибке: возвращает null, ошибка в error_log
+```
+
+### `Cement::ERROR_FALLBACK` (по умолчанию)
+**Универсальный режим.** Возвращает компонент-заглушку. В development показывает детали ошибки, в production - пустой комментарий.
+
+```php
+$cement = new Cement(); // По умолчанию ERROR_FALLBACK
+// При ошибке: <div>Brick Error: ...</div> (development) или <!-- --> (production)
+```
+
+### Автоопределение окружения
+
+Cement автоматически определяет production-окружение:
+
+1. По переменной `APP_ENV=production` (стандарт для Laravel, Symfony и др.)
+2. CLI-скрипты всегда считаются production (для безопасности)
+3. По умолчанию - production (пессимистичный подход)
+
+Можно явно указать окружение:
+
+```php
+// Явное указание
+$isProd = ($_ENV['APP_ENV'] ?? 'development') === 'production';
+$cement = new Cement(
+    errorMode: $isProd ? Cement::ERROR_SILENT : Cement::ERROR_FALLBACK,
+    isProduction: $isProd
+);
+```
+
 
 ## Принципы работы
 

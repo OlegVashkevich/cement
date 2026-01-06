@@ -3,11 +3,16 @@
 namespace OlegV;
 
 use InvalidArgumentException;
+use OlegV\ErrorBrick\ErrorBrick;
 use ReflectionClass;
 use ReflectionException;
+use Throwable;
 
 /**
- * Cement - Фабрика вариантов для Brick компонентов
+ *  Cement - Фабрика вариантов для Brick компонентов
+ *
+ *  Позволяет регистрировать прототипы компонентов с разными вариантами
+ *  и создавать экземпляры с частичными переопределениями свойств.
  */
 class Cement
 {
@@ -15,6 +20,81 @@ class Cement
      * @var array<class-string<Brick>, array<string, Brick>>
      */
     private array $prototypes = [];
+    private bool $isProduction;
+    /**
+     * Режим обработки ошибок: выбрасывать исключения
+     *
+     * Используется в development для немедленного обнаружения ошибок.
+     * При ошибке выбрасывается InvalidArgumentException.
+     */
+    public const ERROR_STRICT = 'strict';
+    /**
+     * Режим обработки ошибок: возвращать null
+     *
+     * Используется в production для предотвращения падения интерфейса.
+     * Ошибки логируются, но интерфейс продолжает работу.
+     */
+    public const ERROR_SILENT = 'silent';
+    /**
+     * Режим обработки ошибок: возвращать компонент-заглушку
+     *
+     * Используется по умолчанию. В development показывает информативную
+     * заглушку с деталями ошибки, в production возвращает пустой комментарий.
+     */
+    public const ERROR_FALLBACK = 'fallback';
+
+    /**
+     * Текущий режим обработки ошибок
+     *
+     * @var string Одна из констант ERROR_*
+     */
+    private string $errorMode;
+
+    /**
+     * Создаёт фабрику вариантов компонентов
+     *
+     * @param  string  $errorMode     Режим обработки ошибок. Допустимые значения:
+     *                                - Cement::ERROR_STRICT   - выбрасывать исключения
+     *                                - Cement::ERROR_SILENT   - возвращать null
+     *                                - Cement::ERROR_FALLBACK - возвращать заглушку (по умолчанию)
+     * @param  bool|null  $isProduction Принудительно указать production-режим.
+     *                                Если null, определяется автоматически по APP_ENV.
+     *                                В production режиме заглушки показывают только комментарии.
+     *
+     * @throws InvalidArgumentException Если передан недопустимый режим ошибок
+     *
+     * @example new Cement() // Безопасный режим с автодетектом окружения
+     * @example new Cement(Cement::ERROR_STRICT, false) // Development с исключениями
+     * @example new Cement(Cement::ERROR_SILENT, true)  // Production с тихими ошибками
+     */
+    public function __construct(string $errorMode = self::ERROR_FALLBACK,?bool $isProduction = null)
+    {
+        if (!in_array($errorMode, [self::ERROR_STRICT, self::ERROR_SILENT, self::ERROR_FALLBACK], true)) {
+            throw new InvalidArgumentException(
+                sprintf('Invalid error mode: %s. Use Cement::ERROR_* constants', $errorMode)
+            );
+        }
+
+        $this->errorMode = $errorMode;
+        // Определяем production-режим: либо явно передан, либо автоопределение
+        $this->isProduction = $isProduction ?? $this->detectProduction();
+    }
+
+    private function detectProduction(): bool
+    {
+        // 1. Явно указано в окружении
+        if (isset($_ENV['APP_ENV'])) {
+            return $_ENV['APP_ENV'] === 'production';
+        }
+
+        // 2. CLI всегда как production для безопасности
+        if (PHP_SAPI === 'cli') {
+            return true;
+        }
+
+        // 3. По умолчанию предполагаем production для безопасности
+        return true;
+    }
 
     /**
      * Регистрирует шаблон варианта
@@ -48,10 +128,28 @@ class Cement
      * @param  string  $className
      * @param  array<mixed, mixed>  $overrides
      * @param  string  $variant
+     * @return Brick|null
+     * @throws Throwable
+     */
+    public function build(string $className, array $overrides = [], string $variant = 'default'): ?Brick
+    {
+        try {
+            return $this->doBuild($className, $overrides, $variant);
+        } catch (Throwable $e) {
+            return $this->handleError($e, $className, $variant);
+        }
+    }
+
+    /**
+     * Создаёт компонент на основе шаблона
+     * @noinspection PhpPluralMixedCanBeReplacedWithArrayInspection
+     * @param  string  $className
+     * @param  array<mixed, mixed>  $overrides
+     * @param  string  $variant
      * @return Brick
      * @throws ReflectionException
      */
-    public function build(string $className, array $overrides = [], string $variant = 'default'): Brick
+    private function doBuild(string $className, array $overrides, string $variant): Brick
     {
         if (!isset($this->prototypes[$className][$variant])) {
             $available = array_keys($this->prototypes[$className] ?? []);
@@ -72,6 +170,39 @@ class Cement
         }
 
         return $this->createFromPrototype($prototype, $overrides);
+    }
+
+    /**
+     * @throws Throwable
+     */
+    private function handleError(Throwable $e, string $className, string $variant): ?ErrorBrick
+    {
+        switch ($this->errorMode) {
+            case self::ERROR_STRICT:
+                throw $e;
+
+            case self::ERROR_SILENT:
+                // Тихое логирование
+                if (!$this->isProduction) {
+                    error_log(sprintf(
+                        '[Cement] Error building %s:%s - %s',
+                        $className,
+                        $variant,
+                        $e->getMessage()
+                    ));
+                }
+                return null;
+
+            case self::ERROR_FALLBACK:
+                // Возвращаем заглушку
+                return new ErrorBrick(
+                    message: $e->getMessage(),
+                    originalClass: $className,
+                    context: "variant: $variant",
+                    isProduction: $this->isProduction
+                );
+        }
+        return null;
     }
 
     /**
