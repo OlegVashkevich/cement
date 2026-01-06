@@ -1,329 +1,252 @@
 <?php
+declare(strict_types=1);
 
 namespace OlegV\Tests;
 
+use InvalidArgumentException;
 use OlegV\Cement;
+use OlegV\Tests\Components\TestButton\TestButton;
+use OlegV\Tests\Components\TestCard\TestCard;
+use OlegV\Tests\Components\TestEmpty\TestEmpty;
+use OlegV\Tests\Components\TestWithDefaults\TestWithDefaults;
 use PHPUnit\Framework\TestCase;
-use RuntimeException;
+use ReflectionException;
 
-class CementTest extends TestCase
+final class CementTest extends TestCase
 {
     private Cement $cement;
+protected function setUp(): void
+{
+    $this->cement = new Cement();
+}
 
-    protected function setUp(): void
-    {
-        $this->cement = new Cement();
-    }
+public function testItCanBeInstantiated(): void
+{
+    $this->assertInstanceOf(Cement::class, $this->cement);
+}
 
-    public function testAddSingleClosure(): void
-    {
-        $this->cement->add(TestClass::class, fn() => new TestClass('test'));
+public function testItAddsAndRetrievesPrototypes(): void
+{
+    $button = new TestButton('Submit');
+    $this->cement->add(TestButton::class, $button, 'submit');
 
-        $instance = $this->cement->get(TestClass::class);
+    $this->assertTrue($this->cement->has(TestButton::class, 'submit'));
+    $this->assertSame($button, $this->cement->getPrototype(TestButton::class, 'submit'));
+}
 
-        $this->assertInstanceOf(TestClass::class, $instance);
-        $this->assertEquals('test', $instance->value);
-    }
+public function testItThrowsExceptionWhenAddingNonBrickClass(): void
+{
+    $this->expectException(\TypeError::class);
+    $this->expectExceptionMessage('must be of type OlegV\Brick');
 
-    public function testAddVariants(): void
-    {
-        $this->cement->add(TestClass::class, [
-            'default' => fn() => new TestClass('default'),
-            'special' => fn() => new TestClass('special'),
-        ]);
+    $fake = new \stdClass();
+    /** @phpstan-ignore argument.type */
+    $this->cement->add(\stdClass::class, $fake);
+}
 
-        $default = $this->cement->get(TestClass::class);
-        $special = $this->cement->get(TestClass::class, ['variant' => 'special']);
+public function testItThrowsExceptionWhenPrototypeNotInstanceOfClass(): void
+{
+    $this->expectException(InvalidArgumentException::class);
+    $this->expectExceptionMessage('Prototype must be instance of');
 
-        $this->assertEquals('default', $default->value);
-        $this->assertEquals('special', $special->value);
-    }
+    $button = new TestButton('Submit');
+    // Пытаемся добавить TestButton как прототип для TestCard
+    $this->cement->add(TestCard::class, $button);
+}
 
-    public function testAddAll(): void
-    {
-        $config = [
-            TestClass::class => [
-                'default' => fn() => new TestClass('test1'),
-            ],
-            AnotherClass::class => fn() => new AnotherClass('test2'),
-        ];
+public function testItReturnsEmptyArrayWhenNoVariants(): void
+{
+    $this->assertSame([], $this->cement->variants(TestButton::class));
+}
 
-        $this->cement->addAll($config);
+public function testItReturnsListOfVariants(): void
+{
+    $this->cement->add(TestButton::class, new TestButton('A'), 'primary');
+    $this->cement->add(TestButton::class, new TestButton('B'), 'secondary');
+    $this->cement->add(TestButton::class, new TestButton('C'), 'danger');
 
-        $this->assertTrue($this->cement->has(TestClass::class));
-        $this->assertTrue($this->cement->has(AnotherClass::class));
+    $variants = $this->cement->variants(TestButton::class);
+    $this->assertSame(['primary', 'secondary', 'danger'], $variants);
+}
 
-        $test1 = $this->cement->get(TestClass::class);
-        $test2 = $this->cement->get(AnotherClass::class);
+public function testItReturnsNullForNonExistentPrototype(): void
+{
+    $this->assertNull($this->cement->getPrototype(TestButton::class, 'nonexistent'));
+}
 
-        $this->assertEquals('test1', $test1->value);
-        $this->assertEquals('test2', $test2->value);
-    }
+public function testItBuildsComponentWithoutOverrides(): void
+{
+    $prototype = new TestButton('Submit', 'primary');
+    $this->cement->add(TestButton::class, $prototype, 'default');
 
-    public function testGetWithParameters(): void
-    {
-        $this->cement->add(TestClass::class,
-            fn($c, $params) => new TestClass($params['value'] ?? 'default')
-        );
+    $result = $this->cement->build(TestButton::class, [], 'default');
 
-        $instance = $this->cement->get(TestClass::class, ['value' => 'custom']);
+    $this->assertInstanceOf(TestButton::class, $result);
+    $this->assertSame('Submit', $result->text);
+    $this->assertSame('primary', $result->variant);
+    // Должен вернуть тот же объект (readonly безопасно)
+    $this->assertSame($prototype, $result);
+}
 
-        $this->assertEquals('custom', $instance->value);
-    }
+public function testItBuildsComponentWithOverrides(): void
+{
+    $prototype = new TestButton('Submit', 'primary');
+    $this->cement->add(TestButton::class, $prototype, 'default');
 
-    public function testMakeAlwaysCreatesNewInstance(): void
-    {
-        $counter = 0;
-        $this->cement->add(TestClass::class,
-            function() use (&$counter) {
-                return new TestClass('test' . ++$counter);
-            }
-        );
+    $result = $this->cement->build(TestButton::class, [
+        'text' => 'Custom Text',
+        'variant' => 'danger'
+    ], 'default');
 
-        $first = $this->cement->get(TestClass::class);
-        $second = $this->cement->get(TestClass::class);
-        $third = $this->cement->make(TestClass::class);
+    $this->assertInstanceOf(TestButton::class, $result);
+    $this->assertSame('Custom Text', $result->text);
+    $this->assertSame('danger', $result->variant);
+    // Это должен быть НОВЫЙ объект
+    $this->assertNotSame($prototype, $result);
+}
 
-        $this->assertSame($first, $second); // Из кэша
-        $this->assertNotSame($first, $third); // Новый экземпляр
-        $this->assertEquals('test1', $first->value);
-        $this->assertEquals('test2', $third->value);
-    }
+public function testItThrowsExceptionWhenBuildingNonExistentVariant(): void
+{
+    $this->expectException(InvalidArgumentException::class);
+    $this->expectExceptionMessage("Variant 'nonexistent' not found for");
 
-    public function testHas(): void
-    {
-        $this->cement->add(TestClass::class, [
-            'default' => fn() => new TestClass('default'),
-            'special' => fn() => new TestClass('special'),
-        ]);
+    $this->cement->build(TestButton::class, [], 'nonexistent');
+}
 
-        $this->assertTrue($this->cement->has(TestClass::class));
-        $this->assertTrue($this->cement->has(TestClass::class, 'default'));
-        $this->assertTrue($this->cement->has(TestClass::class, 'special'));
-        $this->assertFalse($this->cement->has(TestClass::class, 'nonexistent'));
-        $this->assertFalse($this->cement->has('NonexistentClass'));
-    }
+public function testItThrowsExceptionWhenOverridingNonExistentProperty(): void
+{
+    $this->cement->add(TestButton::class, new TestButton('Submit'), 'default');
 
-    public function testClear(): void
-    {
-        $counter = 0;
-        $this->cement->add(TestClass::class,
-            function() use (&$counter) {
-                return new TestClass('test' . ++$counter);
-            }
-        );
+    $this->expectException(InvalidArgumentException::class);
+    $this->expectExceptionMessage("Property 'nonexistent' does not exist in");
 
-        $first = $this->cement->get(TestClass::class);
-        $this->cement->clear();
-        $second = $this->cement->get(TestClass::class);
+    $this->cement->build(TestButton::class, [
+        'nonexistent' => 'value'
+    ], 'default');
+}
 
-        $this->assertNotSame($first, $second);
-        $this->assertEquals('test1', $first->value);
-        $this->assertEquals('test2', $second->value);
-    }
+public function testItCreatesEmptyComponent(): void
+{
+    $prototype = new TestEmpty();
+    $this->cement->add(TestEmpty::class, $prototype, 'default');
 
-    public function testAutowireWithoutConstructor(): void
-    {
-        $instance = $this->cement->get(ClassWithoutConstructor::class);
+    $result = $this->cement->build(TestEmpty::class, [], 'default');
 
-        $this->assertInstanceOf(ClassWithoutConstructor::class, $instance);
-    }
+    $this->assertInstanceOf(TestEmpty::class, $result);
+    $this->assertSame($prototype, $result);
+}
 
-    public function testAutowireWithDependencies(): void
-    {
-        $this->cement->add(TestClass::class, fn() => new TestClass('dependency'));
-        $this->cement->add(AnotherClass::class, fn() => new AnotherClass('another'));
+public function testItBuildsComponentWithDefaults(): void
+{
+    $prototype = new TestWithDefaults();
+    $this->cement->add(TestWithDefaults::class, $prototype, 'default');
 
-        $instance = $this->cement->get(ClassWithDependencies::class);
+    $result = $this->cement->build(TestWithDefaults::class, [
+        'name' => 'custom'
+    ], 'default');
 
-        $this->assertInstanceOf(ClassWithDependencies::class, $instance);
-        $this->assertEquals('dependency', $instance->testClass->value);
-        $this->assertEquals('another', $instance->anotherClass->value);
-    }
+    $this->assertInstanceOf(TestWithDefaults::class, $result);
+    $this->assertSame('custom', $result->name);
+    $this->assertSame(10, $result->count); // Дефолтное значение
+    $this->assertTrue($result->active);    // Дефолтное значение
+}
 
-    public function testAutowireWithParametersOverride(): void
-    {
-        $this->cement->add(TestClass::class, fn() => new TestClass('default'));
-        $this->cement->add(AnotherClass::class, fn() => new AnotherClass('default_another'));
+public function testItWorksWithNestedComponents(): void
+{
+    // Регистрируем варианты кнопок
+    $primaryButton = new TestButton('Submit', 'primary');
+    $dangerButton = new TestButton('Delete', 'danger');
 
-        $instance = $this->cement->get(ClassWithDependencies::class, [
-            'testClass' => new TestClass('custom'),
-            'optional' => 'optional_value',
-        ]);
+    $this->cement->add(TestButton::class, $primaryButton, 'primary');
+    $this->cement->add(TestButton::class, $dangerButton, 'danger');
 
-        $this->assertEquals('custom', $instance->testClass->value);
-        $this->assertEquals('default_another', $instance->anotherClass->value);
-        $this->assertEquals('optional_value', $instance->optional);
-    }
+    // Создаём карточку с кнопкой из Cement
+    $cardPrototype = new TestCard(
+        'Default Card',
+        $this->cement->build(TestButton::class, [], 'primary'),
+        'default'
+    );
 
-    public function testAutowireWithOptionalParameter(): void
-    {
-        $this->cement->add(TestClass::class, fn() => new TestClass('dependency'));
+    $this->cement->add(TestCard::class, $cardPrototype, 'default');
 
-        $instance = $this->cement->get(ClassWithOptionalDependency::class);
+    // Создаём кастомную карточку с переопределённой кнопкой
+    $customCard = $this->cement->build(TestCard::class, [
+        'title' => 'Custom Card',
+        'button' => $this->cement->build(TestButton::class, [
+            'text' => 'Custom Action',
+            'variant' => 'success'
+        ], 'primary'), // Используем primary как основу
+    ], 'default');
 
-        $this->assertInstanceOf(ClassWithOptionalDependency::class, $instance);
-        $this->assertNotNull($instance->required);
-        $this->assertNull($instance->optional);
-    }
+    $this->assertInstanceOf(TestCard::class, $customCard);
+    $this->assertSame('Custom Card', $customCard->title);
+    $this->assertSame('Custom Action', $customCard->button->text);
+    $this->assertSame('success', $customCard->button->variant);
+}
 
-    public function testAutowireWithBuiltinTypes(): void
-    {
-        $instance = $this->cement->get(ClassWithBuiltinTypes::class, [
-            'name' => 'TestName',
-            'count' => 42,
-        ]);
+public function testItClearsAllPrototypes(): void
+{
+    $this->cement->add(TestButton::class, new TestButton('A'), 'variant1');
+    $this->cement->add(TestButton::class, new TestButton('B'), 'variant2');
 
-        $this->assertEquals('TestName', $instance->name);
-        $this->assertEquals(42, $instance->count);
-        $this->assertTrue($instance->active);
-    }
+    $this->assertTrue($this->cement->has(TestButton::class, 'variant1'));
+    $this->assertTrue($this->cement->has(TestButton::class, 'variant2'));
 
-    public function testThrowsExceptionWhenClassNotFound(): void
-    {
-        $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('Класс NonExistentClass не найден');
+    $this->cement->clear();
 
-        $this->cement->get('NonExistentClass');
-    }
+    $this->assertFalse($this->cement->has(TestButton::class, 'variant1'));
+    $this->assertFalse($this->cement->has(TestButton::class, 'variant2'));
+    $this->assertSame([], $this->cement->variants(TestButton::class));
+}
 
-    public function testThrowsExceptionWhenVariantNotFound(): void
-    {
-        $this->cement->add(TestClass::class, [
-            'default' => fn() => new TestClass('default'),
-        ]);
+public function testErrorMessageShowsAvailableVariants(): void
+{
+    $this->cement->add(TestButton::class, new TestButton('A'), 'primary');
+    $this->cement->add(TestButton::class, new TestButton('B'), 'secondary');
 
-        $this->expectException(RuntimeException::class);
-
-        $this->cement->get(TestClass::class, ['variant' => 'nonexistent']);
-    }
-
-    public function testThrowsExceptionForUnresolvableDependency(): void
-    {
-        $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('Не удалось разрешить зависимость');
-
-        $this->cement->get(ClassWithUnresolvableDependency::class);
-    }
-
-    public function testThrowsExceptionForUnresolvableBuiltinParameter(): void
-    {
-        $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('Не удалось разрешить обязательный параметр');
-
-        $this->cement->get(ClassWithRequiredBuiltinParameter::class);
-    }
-
-    public function testFactoryReturnsObject(): void
-    {
-        $object = new TestClass('premade');
-        $this->cement->add(TestClass::class, ['default' => $object]);
-
-        $instance = $this->cement->get(TestClass::class);
-
-        $this->assertSame($object, $instance);
-    }
-
-    public function testFactoryWithArrayParameters(): void
-    {
-        $this->cement->add(TestClass::class, [
-            'default' => ['array_value'],
-        ]);
-
-        $instance = $this->cement->get(TestClass::class);
-
-        $this->assertEquals('array_value', $instance->value);
-    }
-
-    public function testCacheKeyIncludesParameters(): void
-    {
-        $this->cement->add(TestClass::class,
-            fn($c, $params) => new TestClass($params['value'] ?? 'default')
-        );
-
-        $instance1 = $this->cement->get(TestClass::class, ['value' => 'first']);
-        $instance2 = $this->cement->get(TestClass::class, ['value' => 'second']);
-        $instance3 = $this->cement->get(TestClass::class, ['value' => 'first']);
-
-        $this->assertNotSame($instance1, $instance2);
-        $this->assertSame($instance1, $instance3);
-        $this->assertEquals('first', $instance1->value);
-        $this->assertEquals('second', $instance2->value);
-    }
-
-    public function testCircularDependencyDetection(): void
-    {
-        $this->cement->add(CircularA::class,
-            fn($c) => new CircularA($c->get(CircularB::class))
-        );
-
-        $this->cement->add(CircularB::class,
-            fn($c) => new CircularB($c->get(CircularA::class))
-        );
-
-        $this->expectException(RuntimeException::class);
-
-        $this->cement->get(CircularA::class);
+    try {
+        $this->cement->build(TestButton::class, [], 'nonexistent');
+        $this->fail('Should have thrown exception');
+    } catch (InvalidArgumentException $e) {
+        $this->assertStringContainsString("Variant 'nonexistent' not found for", $e->getMessage());
+        $this->assertStringContainsString('Available: primary, secondary', $e->getMessage());
     }
 }
 
-// Вспомогательные классы для тестирования
-
-class TestClass
+public function testErrorMessageShowsNoneWhenNoVariants(): void
 {
-    public function __construct(public string $value) {}
+    try {
+        $this->cement->build(TestButton::class, [], 'nonexistent');
+        $this->fail('Should have thrown exception');
+    } catch (InvalidArgumentException $e) {
+        $this->assertStringContainsString('Available: none', $e->getMessage());
+    }
 }
 
-class AnotherClass
+public function testItHandlesPartialOverridesCorrectly(): void
 {
-    public function __construct(public string $value) {}
+    $prototype = new TestButton('Original', 'primary');
+    $this->cement->add(TestButton::class, $prototype, 'default');
+
+    // Переопределяем только text, variant остаётся из прототипа
+    $result = $this->cement->build(TestButton::class, [
+        'text' => 'Modified'
+    ], 'default');
+
+    $this->assertSame('Modified', $result->text);
+    $this->assertSame('primary', $result->variant);
 }
 
-class ClassWithoutConstructor {}
+public function testItPreservesObjectIdentityForEmptyOverrides(): void
+{
+    $prototype = new TestButton('Test', 'variant');
+    $this->cement->add(TestButton::class, $prototype, 'default');
 
-class ClassWithDependencies
-{
-    public function __construct(
-        public TestClass $testClass,
-        public AnotherClass $anotherClass,
-        public string $optional = 'default'
-    ) {}
-}
+    $result1 = $this->cement->build(TestButton::class, [], 'default');
+    $result2 = $this->cement->build(TestButton::class, [], 'default');
 
-class ClassWithOptionalDependency
-{
-    public function __construct(
-        public TestClass $required,
-        public ?AnotherClass $optional = null
-    ) {}
+    $this->assertSame($prototype, $result1);
+    $this->assertSame($prototype, $result2);
+    $this->assertSame($result1, $result2);
 }
-
-class ClassWithBuiltinTypes
-{
-    public function __construct(
-        public string $name,
-        public int $count,
-        public bool $active = true
-    ) {}
-}
-
-class ClassWithUnresolvableDependency
-{
-    public function __construct(TestClass $required) {}
-}
-
-class CircularA
-{
-    public function __construct(public CircularB $b) {}
-}
-
-class CircularB
-{
-    public function __construct(public CircularA $a) {}
-}
-class ClassWithRequiredBuiltinParameter
-{
-    public function __construct(
-        public string $requiredString // Нет значения по умолчанию
-    ) {}
 }

@@ -10,7 +10,8 @@
         "email": "ugluk@tut.by"
     }],
     "require": {
-        "php": ">=8.2"
+        "php": ">=8.2",
+        "olegv/brick": "dev-master"
     },
     "require-dev": {
         "phpstan/phpstan": "^2.1.33",

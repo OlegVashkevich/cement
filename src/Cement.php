@@ -1,290 +1,188 @@
 <?php
-/**
- * Cement - DI-контейнер для PHP-компонентов
- * Легковесный контейнер внедрения зависимостей с поддержкой вариантов и автосвязывания.
- * Идеально подходит для компонентных систем вроде Brick.
- *
- * @package OlegV\Cement
- * @version 1.0.0
- * @license MIT
- */
-
-declare(strict_types=1);
 
 namespace OlegV;
 
-use Closure;
-use Exception;
+use InvalidArgumentException;
 use ReflectionClass;
-use ReflectionNamedType;
-use RuntimeException;
+use ReflectionException;
 
 /**
- * Cement - DI-контейнер для Brick-компонентов
- *
- * @example
- * $cement = new Cement();
- * $cement->mix(Button::class, [
- *     'default' => fn($c) => new Button('Кнопка', 'primary'),
- *     'search'  => fn($c) => new Button('Поиск', 'outline'),
- * ]);
- *
- * $button = $cement->get(Button::class, ['variant' => 'search']);
+ * Cement - Фабрика вариантов для Brick компонентов
  */
 class Cement
 {
     /**
-     * @var array<string, array<string, Closure|object|array<string, mixed>>>
+     * @var array<class-string<Brick>, array<string, Brick>>
      */
-    private array $definitions = [];
-    /**
-     * @var array<string, object>
-     */
-    private array $instances = [];
-    /**
-     * @var array<string, bool>
-     */
-    private array $resolving = [];
+    private array $prototypes = [];
 
     /**
-     * Используем компонент с вариантами
-     * @param  string  $className  Класс компонента
-     * @param  array<string, array<string, Closure|object|array<string, mixed>>>|Closure  $factory  Массив вариантов или фабричная функция
+     * Регистрирует шаблон варианта
+     * @param  string  $className
+     * @param  Brick  $prototype
+     * @param  string  $variant
      */
-    public function add(string $className, array|Closure $factory): void
+    public function add(string $className, Brick $prototype, string $variant = 'default'): void
     {
-        // Если передана просто фабрика - оборачиваем в массив с ключом 'default'
-        if ($factory instanceof Closure) {
-            $this->definitions[$className] = ['default' => $factory];
-        } else {
-            $this->definitions[$className] = $factory;
-        }
-    }
-
-    /**
-     * Используем несколько компонентов сразу
-     *
-     * @param  array<string, array<string, array<string, Closure|object|array<string, mixed>>>|Closure>  $config  Массив вариантов или фабричная функция
-     */
-    public function addAll(array $config): void
-    {
-        foreach ($config as $className => $variants) {
-            $this->add($className, $variants);
-        }
-    }
-
-    /**
-     * Получить компонент
-     *
-     * @param string $className Класс компонента
-     * @param array<string, mixed> $params Параметры для конструктора или фабрики
-     * @return object Готовый компонент
-     */
-    public function get(string $className, array $params = []): object
-    {
-        // Определяем вариант (если не указан - 'default')
-        $variant = $params['variant'] ?? 'default';
-        if (!is_string($variant)) {
-            throw new RuntimeException('Параметр variant должен быть строкой');
-        }
-        unset($params['variant']);
-
-        // Ключ для кэша
-        $key = $className . ':' . $variant;
-        if ($params !== []) {
-            $key .= ':' . md5(serialize($params));
-        }
-
-        // Возвращаем из кэша если есть
-        if (isset($this->instances[$key])) {
-            return $this->instances[$key];
-        }
-
-        // Создаём компонент
-        $instance = $this->create($className, $variant, $params);
-
-        // Сохраняем в кэш
-        $this->instances[$key] = $instance;
-
-        return $instance;
-    }
-
-    /**
-     * Создаёт новый экземпляр (игнорирует кэш)
-     *
-     * @param  string  $className  Класс компонента
-     * @param  array<string, mixed>  $params  Параметры для конструктора или фабрики
-     * @return object Готовый компонент
-    */
-    public function make(string $className, array $params = []): object
-    {
-        $variant = $params['variant'] ?? 'default';
-        if (!is_string($variant)) {
-            throw new RuntimeException('Параметр variant должен быть строкой');
-        }
-        unset($params['variant']);
-
-        return $this->create($className, $variant, $params);
-    }
-
-    /**
-     * Проверяет, зарегистрирован ли компонент
-     */
-    public function has(string $className, string $variant = 'default'): bool
-    {
-        return isset($this->definitions[$className][$variant]);
-    }
-
-    /**
-     * Очищает кэш (полезно для тестов)
-     */
-    public function clear(): void
-    {
-        $this->instances = [];
-    }
-
-    /**
-     * Основная логика создания компонента
-     *
-     * @param  string  $className  Класс компонента
-     * @param  string  $variant Вариант конструктора
-     * @param  array<string, mixed>  $params  Параметры для конструктора или фабрики
-     * @return object Готовый компонент
-     */
-    private function create(string $className, string $variant, array $params): object
-    {
-        // Проверка на циклическую зависимость
-        $resolvingKey = $className . ':' . $variant;
-        if (isset($this->resolving[$resolvingKey])) {
-            throw new RuntimeException(
-                "Обнаружена циклическая зависимость при создании $className ($variant)"
+        if (!is_subclass_of($className, Brick::class)) {
+            throw new InvalidArgumentException(
+                sprintf('Class %s must extend %s', $className, Brick::class)
             );
         }
 
-        $this->resolving[$resolvingKey] = true;
-        try {
-            // Если есть определение - используем его
-            if (isset($this->definitions[$className][$variant])) {
-                $factory = $this->definitions[$className][$variant];
-
-                if ($factory instanceof Closure) {
-                    return (object)$factory($this, $params);
-                }
-
-                if (is_object($factory)) {
-                    return $factory;
-                }
-
-                if (is_array($factory)) {
-                    return new $className(...$factory);
-                }
-
-                /** @phpstan-ignore deadCode.unreachable */
-                throw new RuntimeException("Некорректная фабрика для $className:$variant");
-            }
-
-            // Если нет определения - создаём автоматически
-            return $this->autowire($className, $params);
-        } finally {
-            unset($this->resolving[$resolvingKey]);
+        if (!$prototype instanceof $className) {
+            throw new InvalidArgumentException(
+                sprintf('Prototype must be instance of %s, got %s',
+                    $className,
+                    get_class($prototype)
+                )
+            );
         }
+
+        $this->prototypes[$className][$variant] = $prototype;
     }
 
     /**
-     * Автоматическое создание компонента через рефлексию
-     * @param  string  $className  Класс компонента
-     * @param  array<string, mixed>  $params  Параметры для конструктора или фабрики
-     * @return object Готовый компонент
- */
-    private function autowire(string $className, array $params): object
+     * Создаёт компонент на основе шаблона
+     * @noinspection PhpPluralMixedCanBeReplacedWithArrayInspection
+     * @param  string  $className
+     * @param  array<mixed, mixed>  $overrides
+     * @param  string  $variant
+     * @return Brick
+     * @throws ReflectionException
+     */
+    public function build(string $className, array $overrides = [], string $variant = 'default'): Brick
     {
-        if (!class_exists($className)) {
-            throw new RuntimeException("Класс $className не найден");
+        if (!isset($this->prototypes[$className][$variant])) {
+            $available = array_keys($this->prototypes[$className] ?? []);
+            throw new InvalidArgumentException(
+                sprintf("Variant '%s' not found for %s. Available: %s",
+                    $variant,
+                    $className,
+                    (count($available)>0) ? implode(', ', $available) : 'none'
+                )
+            );
+        }
+
+        $prototype = $this->prototypes[$className][$variant];
+
+        // Если нет переопределений - возвращаем прототип как есть (readonly безопасно)
+        if ($overrides===[]) {
+            return $prototype;
+        }
+
+        return $this->createFromPrototype($prototype, $overrides);
+    }
+
+    /**
+     * Создаёт компонент
+     * @noinspection PhpPluralMixedCanBeReplacedWithArrayInspection
+     * @param  string  $className
+     * @param  array<mixed, mixed>  $properties
+     * @return Brick
+     * @throws ReflectionException
+     */
+    private function make(string $className, array $properties): Brick
+    {
+        if (!is_subclass_of($className, Brick::class)) {
+            throw new InvalidArgumentException(
+                sprintf('Class %s must extend %s', $className, Brick::class)
+            );
         }
 
         $reflection = new ReflectionClass($className);
+        $constructor = $reflection->getConstructor();
 
-        // Если нет конструктора
-        if ($reflection->getConstructor() === null) {
+        if ($constructor===null) {
             return new $className();
         }
 
-        // Собираем аргументы для конструктора
-        $args = $this->resolveConstructorArgs($reflection, $params);
-
-        return new $className(...$args);
-    }
-
-    /**
-     * Разрешает аргументы конструктора
-     * @param  ReflectionClass<object>  $reflection
-     * @param  array<string, mixed>  $params
-     * @return array<int, mixed>
-     */
-    private function resolveConstructorArgs(ReflectionClass $reflection, array $params): array
-    {
-        $constructor = $reflection->getConstructor();
-        if($constructor === null) {
-            return [];
-        }
-        $args = [];
-
+        // Собираем параметры в правильном порядке
+        $params = [];
         foreach ($constructor->getParameters() as $param) {
             $name = $param->getName();
 
-            // Если параметр передан явно
-            if (array_key_exists($name, $params)) {
-                $args[] = $params[$name];
-                continue;
-            }
-
-            // Если параметр - это другой Brick компонент
-            $type = $param->getType();
-            if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
-                $typeName = $type->getName();
-
-                // Пробуем создать через контейнер
-                try {
-                    $args[] = $this->get($typeName);
-                    continue;
-                } catch (Exception) {
-                    // Не получилось - проверяем, может ли быть null
-                    if ($type->allowsNull()) {
-                        $args[] = null;
-                        continue;
-                    }
-                    // Если тип не nullable, выбрасываем исключение
-                    throw new RuntimeException(
-                        "Не удалось разрешить зависимость {$typeName} для параметра {$name}"
+            if (!array_key_exists($name, $properties)) {
+                if (!$param->isOptional()) {
+                    throw new InvalidArgumentException(
+                        sprintf("Missing required parameter '%s' for %s", $name, $className)
                     );
                 }
+                $params[] = $param->getDefaultValue();
+            } else {
+                $params[] = $properties[$name];
             }
-
-            // Значение по умолчанию
-            if ($param->isDefaultValueAvailable()) {
-                $args[] = $param->getDefaultValue();
-                continue;
-            }
-
-            // Если тип позволяет null или это встроенный тип
-            if ($type!==null && $type->allowsNull()) {
-                $args[] = null;
-                continue;
-            }
-
-            // Для обязательных параметров без значения по умолчанию
-            $typeName = 'mixed';
-            if ($type instanceof ReflectionNamedType) {
-                $typeName = $type->getName();
-            } elseif ($type !== null) {
-                // Для других типов ReflectionType (например, ReflectionUnionType)
-                $typeName = (string)$type;
-            }
-            throw new RuntimeException(
-                "Не удалось разрешить обязательный параметр $name типа $typeName"
-            );
         }
 
-        return $args;
+        return new $className(...$params);
+    }
+
+    /**
+     * Проверяет существование варианта
+     * @param  string  $className
+     * @param  string  $variant
+     * @return bool
+     */
+    public function has(string $className, string $variant = 'default'): bool
+    {
+        return isset($this->prototypes[$className][$variant]);
+    }
+
+    /**
+     * Возвращает список вариантов для класса
+     * @param  string  $className
+     * @return string[]|int[]
+     */
+    public function variants(string $className): array
+    {
+        return array_keys($this->prototypes[$className] ?? []);
+    }
+
+    /**
+     * Возвращает прототип для проверки/документации
+     * @param  string  $className
+     * @param  string  $variant
+     * @return Brick|null
+     */
+    public function getPrototype(string $className, string $variant = 'default'): ?Brick
+    {
+        return $this->prototypes[$className][$variant] ?? null;
+    }
+
+    /**
+     * Очищает все зарегистрированные прототипы
+     */
+    public function clear(): void
+    {
+        $this->prototypes = [];
+    }
+
+    /**
+     * Создаёт экземпляр с переопределениями из прототипа
+     * @noinspection PhpPluralMixedCanBeReplacedWithArrayInspection
+     * @param  Brick  $prototype
+     * @param  array<mixed, mixed>  $overrides
+     * @return Brick
+     * @throws ReflectionException
+     */
+    private function createFromPrototype(Brick $prototype, array $overrides): Brick
+    {
+        $className = get_class($prototype);
+        $prototypeProperties = get_object_vars($prototype);
+
+        // Проверяем, что все переопределяемые свойства существуют
+        foreach (array_keys($overrides) as $key) {
+            if (!property_exists($prototype, $key)) {
+                throw new InvalidArgumentException(
+                    sprintf("Property '%s' does not exist in %s", $key, $className)
+                );
+            }
+        }
+
+        // Сливаем свойства (переопределения имеют приоритет)
+        $properties = array_merge($prototypeProperties, $overrides);
+
+        // Создаём новый экземпляр
+        return $this->make($className, $properties);
     }
 }
